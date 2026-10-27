@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quaternionic Upper Bild Explorer</title>
+<style>
+  :root { --bg:#f5f1e8; --paper:#fffdf8; --ink:#19252b; --muted:#657177; --line:#d8d1c3; --blue:#116a78; --gold:#d58a20; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  header { padding:28px 34px 18px; border-bottom:1px solid var(--line); background:var(--paper); }
+  h1 { margin:0 0 5px; font-family:Georgia,serif; font-size:30px; font-weight:600; }
+  header p { margin:0; color:var(--muted); }
+  main { display:grid; grid-template-columns:320px minmax(560px,1fr); gap:18px; padding:18px; max-width:1500px; margin:auto; }
+  .panel { background:var(--paper); border:1px solid var(--line); border-radius:12px; box-shadow:0 5px 18px #2632380b; }
+  aside { padding:20px; }
+  h2 { margin:0 0 13px; font-size:16px; letter-spacing:.04em; text-transform:uppercase; color:var(--blue); }
+  .matrix { display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; padding:12px; border:1px solid var(--line); border-radius:9px; margin-bottom:16px; }
+  .matrix-title { grid-column:1/-1; font-family:Georgia,serif; font-size:17px; }
+  label { display:block; color:var(--muted); font-size:12px; }
+  input, select { width:100%; margin-top:3px; padding:8px 9px; border:1px solid #c9c2b5; border-radius:6px; background:white; color:var(--ink); font:inherit; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  button { border:0; border-radius:7px; padding:10px 12px; font-weight:650; cursor:pointer; }
+  #draw { width:100%; background:var(--blue); color:white; margin:14px 0 8px; }
+  #draw:hover { background:#0d5965; }
+  .secondary { background:#e8e2d6; color:var(--ink); }
+  .buttons { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .note { margin:15px 0 0; padding-top:13px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+  .plot-wrap { padding:12px; min-width:0; }
+  canvas { display:block; width:100%; height:auto; background:white; border-radius:8px; }
+  #status { padding:8px 6px 2px; color:var(--muted); font-size:13px; display:flex; justify-content:space-between; gap:12px; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  @media (max-width:900px) { main { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Quaternionic Upper Bild Explorer</h1>
+  <p>For an upper triangular matrix A = [[a₁+b₁i, q₀+q₁i+q₂j+q₃k], [0, a₂+b₂i]].</p>
+</header>
+<main>
+  <aside class="panel">
+    <h2>Matrix parameters</h2>
+    <div class="matrix">
+      <div class="matrix-title">Diagonal entries</div>
+      <label>a₁<input id="a1" type="number" step="any" value="1"></label>
+      <label>b₁<input id="b1" type="number" step="any" value="2"></label>
+      <label>a₂<input id="a2" type="number" step="any" value="-2"></label>
+      <label>b₂<input id="b2" type="number" step="any" value="6"></label>
+      <div class="matrix-title" style="margin-top:5px">Off-diagonal quaternion q</div>
+      <label>q₀<input id="q0" type="number" step="any" value="3"></label>
+      <label>q₁<input id="q1" type="number" step="any" value="0"></label>
+      <label>q₂<input id="q2" type="number" step="any" value="4"></label>
+      <label>q₃<input id="q3" type="number" step="any" value="0"></label>
+    </div>
+    <div class="row">
+      <label>Samples
+        <select id="samples"><option>15000</option><option selected>50000</option><option>100000</option><option>200000</option></select>
+      </label>
+      <label>Random seed<input id="seed" type="number" step="1" value="2026"></label>
+    </div>
+    <button id="draw">Compute upper bild</button>
+    <div class="buttons">
+      <button class="secondary" id="preset">Load disk test</button>
+      <button class="secondary" id="save">Save PNG</button>
+    </div>
+    <p class="note">Numerical visualization only. Points are obtained directly from the projective parametrization in the paper. Finite sampling is not a proof of a boundary formula or convexity.</p>
+  </aside>
+  <section class="panel plot-wrap">
+    <canvas id="plot" width="1100" height="720"></canvas>
+    <div id="status"><span>Ready.</span><span></span></div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const canvas = $("plot"), ctx = canvas.getContext("2d");
+
+function mul(p,q) {
+  const [a,b,c,d]=p, [e,f,g,h]=q;
+  return [a*e-b*f-c*g-d*h, a*f+b*e+c*h-d*g,
+          a*g-b*h+c*e+d*f, a*h+b*g-c*f+d*e];
+}
+function conj(q) { return [q[0],-q[1],-q[2],-q[3]]; }
+function add3(a,sa,b,sb,c,sc) { return a.map((v,k)=>sa*v+sb*b[k]+sc*c[k]); }
+function rng32(seed) {
+  let x=(seed|0)||1;
+  return ()=>{ x^=x<<13; x^=x>>>17; x^=x<<5; return (x>>>0)/4294967296; };
+}
+function normal4(rand) {
+  const r1=Math.sqrt(-2*Math.log(Math.max(rand(),1e-14))), a=2*Math.PI*rand();
+  const r2=Math.sqrt(-2*Math.log(Math.max(rand(),1e-14))), b=2*Math.PI*rand();
+  const q=[r1*Math.cos(a),r1*Math.sin(a),r2*Math.cos(b),r2*Math.sin(b)];
+  const n=Math.hypot(...q); return q.map(v=>v/n);
+}
+function parameters() {
+  const names=["a1","b1","a2","b2","q0","q1","q2","q3"];
+  const p={}; for (const n of names) { p[n]=Number($(n).value); if(!Number.isFinite(p[n])) throw new Error(`Invalid ${n}`); }
+  p.samples=Number($("samples").value); p.seed=Number($("seed").value)|0; return p;
+}
+function sample(p) {
+  const rand=rng32(p.seed), c1=[p.a1,p.b1,0,0], c2=[p.a2,p.b2,0,0], q=[p.q0,p.q1,p.q2,p.q3];
+  const xs=new Float64Array(p.samples), ys=new Float64Array(p.samples);
+  let xmin=Infinity,xmax=-Infinity,ymax=0;
+  for(let n=0;n<p.samples;n++) {
+    const t=rand(), rho=Math.sqrt(t*(1-t)), u=normal4(rand);
+    const ucu=mul(mul(conj(u),c2),u), qu=mul(q,u);
+    const w=add3(c1,1-t,ucu,t,qu,rho), x=w[0], y=Math.hypot(w[1],w[2],w[3]);
+    xs[n]=x; ys[n]=y; xmin=Math.min(xmin,x); xmax=Math.max(xmax,x); ymax=Math.max(ymax,y);
+  }
+  return {xs,ys,xmin,xmax,ymax};
+}
+function nice(v) { if(v===0)return 1; const p=10**Math.floor(Math.log10(v)), z=v/p; return (z<2?2:z<5?5:10)*p; }
+function draw(data,p) {
+  const W=canvas.width,H=canvas.height,L=84,R=28,T=35,B=70;
+  const dx=Math.max(data.xmax-data.xmin,1e-8), padx=.07*dx;
+  let xmin=data.xmin-padx,xmax=data.xmax+padx,ymin=0,ymax=Math.max(data.ymax*1.08,1e-8);
+  const sx=(W-L-R)/(xmax-xmin), sy=(H-T-B)/(ymax-ymin);
+  ctx.clearRect(0,0,W,H); ctx.fillStyle="#fff";ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#e7e2d9";ctx.lineWidth=1;ctx.fillStyle="#68757a";ctx.font="13px system-ui";
+  const xt=nice((xmax-xmin)/7), yt=nice(ymax/6);
+  for(let x=Math.ceil(xmin/xt)*xt;x<=xmax+1e-10;x+=xt){const px=L+(x-xmin)*sx;ctx.beginPath();ctx.moveTo(px,T);ctx.lineTo(px,H-B);ctx.stroke();ctx.textAlign="center";ctx.fillText(x.toPrecision(4).replace(/\.0+$/,""),px,H-B+24);}
+  for(let y=0;y<=ymax+1e-10;y+=yt){const py=H-B-y*sy;ctx.beginPath();ctx.moveTo(L,py);ctx.lineTo(W-R,py);ctx.stroke();ctx.textAlign="right";ctx.fillText(y.toPrecision(4).replace(/\.0+$/,""),L-10,py+4);}
+  ctx.strokeStyle="#26363d";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(L,T);ctx.lineTo(L,H-B);ctx.lineTo(W-R,H-B);ctx.stroke();
+  ctx.fillStyle="rgba(17,106,120,.16)";
+  for(let n=0;n<data.xs.length;n++){const px=L+(data.xs[n]-xmin)*sx,py=H-B-data.ys[n]*sy;ctx.fillRect(px,py,1.35,1.35);}
+  ctx.fillStyle="#19252b";ctx.font="17px Georgia";ctx.textAlign="center";ctx.fillText("Re(x*Ax)",(L+W-R)/2,H-18);
+  ctx.save();ctx.translate(22,(T+H-B)/2);ctx.rotate(-Math.PI/2);ctx.fillText("|Im(x*Ax)|",0,0);ctx.restore();
+  ctx.textAlign="left";ctx.font="14px ui-monospace,monospace";ctx.fillText(`A = [[${p.a1}${p.b1<0?"":"+"}${p.b1}i, ${p.q0}${p.q1<0?"":"+"}${p.q1}i${p.q2<0?"":"+"}${p.q2}j${p.q3<0?"":"+"}${p.q3}k], [0, ${p.a2}${p.b2<0?"":"+"}${p.b2}i]]`,L,T-12);
+}
+function compute(){try{$("status").children[0].textContent="Computing…";requestAnimationFrame(()=>{const p=parameters(),start=performance.now(),d=sample(p);draw(d,p);$("status").children[0].textContent=`${p.samples.toLocaleString()} samples · ${(performance.now()-start).toFixed(0)} ms`;$("status").children[1].textContent=`x ∈ [${d.xmin.toFixed(4)}, ${d.xmax.toFixed(4)}], y ≤ ${d.ymax.toFixed(4)}`;});}catch(e){$("status").children[0].textContent=e.message;}}
+$("draw").onclick=compute;
+$("preset").onclick=()=>{const v={a1:0,b1:0,a2:0,b2:0,q0:2,q1:0,q2:0,q3:0};for(const [k,x] of Object.entries(v))$(k).value=x;compute();};
+$("save").onclick=()=>{const a=document.createElement("a");a.download="upper_bild.png";a.href=canvas.toDataURL("image/png");a.click();};
+compute();
+</script>
+</body>
+</html>
